@@ -1,7 +1,9 @@
-from sensor import Sensor, SensorOptions
+from .sensor import Sensor, SensorOptions, SensorConfig, SensorState
 
 
 __all__ = [
     "Sensor",
-    "SensorOptions"
+    "SensorOptions",
+    "SensorConfig",
+    "SensorState"
 ]
