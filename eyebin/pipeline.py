@@ -1,6 +1,11 @@
 from dataclasses import dataclass
-from .environment import Environment, EnvironmentOptions
-import pyrealsense2 as rs
+from collections import defaultdict
+
+from eyebin.stream import Stream, StreamProfile
+from eyebin.core.sensor import Sensor, SensorConfig, SensorState
+from eyebin.core.sensor.exceptions import *
+from eyebin.util.resolver import SPResolver
+from eyebin.util.resolver import PVID
 
 import logging
 from rich.logging import RichHandler
@@ -31,46 +36,81 @@ class Pipeline:
     """
 
     def __init__(self,
-                 environment : Environment,
                  options : PipelineOptions
                  ):
+        
         self.opts = options
-        self.env = environment
+        self.prf_to_sensor : dict[StreamProfile, Sensor] = {}
+        self.resolver = SPResolver()
 
 
-    def start_component_pipelines(self):
-        """
-        Starts RealSense's camera pipelines.
-        """
-        env = self.env
+    def add_config(self,
+                  profiles : set[StreamProfile],
+                  pvid_device : PVID | None = None
+                  ):
 
-        if self.opts.optimized_startup:
-            env.optimize_low_stereo_temperature() # heat sensors before proceeding
+        prf_to_ss = self.prf_to_sensor
 
-        config = rs.config()
+        prf_to_ss_new : dict[StreamProfile, Sensor] = {}
 
-        pipeline_rs = rs.pipeline()
-        pass
+        for profile in profiles:
 
-        # TODO
+            if profile in prf_to_ss:
+                # remove configuration if exists
+                self.remove_config(profile)
+
+            sensor = self.resolver.resolve(
+                stream_profile=profile,
+                pvid=pvid_device
+                )
+
+            if sensor is None:
+                raise RuntimeError(
+                    "Could not resolve a sensor for stream profile=%r and PVID=%r." % (profile, pvid_device)
+                    )
+
+            prf_to_ss_new[profile] = sensor # do the mapping
+
+        sensor_profiles : defaultdict[Sensor, set[StreamProfile]] = defaultdict(set)
+        for profile, sensor in prf_to_ss_new.items():
+
+            sensor_profiles[sensor].add(profile)
+
+        for sensor, _profiles in sensor_profiles.items():
+
+            sensor.configure(SensorConfig(
+                stream=Stream(),
+                stream_profiles=frozenset(_profiles)
+            ))
+
+        prf_to_ss.update(prf_to_ss_new) # update the mapping
 
 
-    def capture(self):
-        raise NotImplementedError()
+    def remove_config(self, profile : StreamProfile):
+        sensor = self.prf_to_sensor.pop(profile)
 
 
     def start(self):
-        """
-        Starts the pipeline.
-        """
 
-        env = self.env
-        
-        env.init_components() # initialize the components
+        if not self.prf_to_sensor:
+            raise RuntimeError(
+                "Sensor not found, please configure pipeline before starting it."
+                )
 
-        self.start_component_pipelines()
+        # get sensors only 'once'
+        sensors = sensors = list(dict.fromkeys(self.prf_to_sensor.values()))
 
-        while self.all_components_healthy():
-            pass
+        for sensor in sensors:
 
-        # TODO
+            # if open, close it
+            if sensor.state == SensorState.OPENED:
+                sensor.close()
+
+            if sensor.state != SensorState.CLOSED:
+                raise RuntimeError("Sensor is already streaming.")
+
+            # open the sensor
+            sensor.open()
+
+            # start the sensor
+            sensor.start()
