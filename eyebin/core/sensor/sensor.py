@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from threading import Lock # for thread-safe
 
@@ -8,6 +8,12 @@ from eyebin.stream import Stream, StreamProfile
 @dataclass
 class SensorOptions:
     pass
+
+
+@dataclass(frozen=True)
+class SensorConfig:
+    stream : Stream | None = None
+    stream_profiles : frozenset[StreamProfile] = frozenset()
 
 
 class SensorState(Enum):
@@ -33,54 +39,51 @@ class Sensor:
     The derived classes must implement the functions properly
     to ensure that all assumptions are satisfied.
     """
-    def __init__(self, options : SensorOptions):
+    def __init__(self, options : SensorOptions, config : SensorConfig = None):
 
         # initialize state
         self._state = SensorState.CLOSED
 
-        # store sensor options
+        # save the config
         self.opts = options
 
-        # initialize an empty set for stream profiles
-        self._profiles : set[StreamProfile] = set()
-
-        # define receiver stream
-        self._stream : Stream | None = None
+        # save the config
+        self._conf = config if config is not None else SensorConfig()
 
         # create mutex
         self._lock = Lock()
 
 
     @property
+    def config(self):
+        with self._lock:
+            return replace(self._conf)
+
+
+    @property
     def state(self):
-        return self._state
-
-
-    @property
-    def options(self):
-        return self.opts
-
-
-    @property
-    def profiles(self):
-        return self._profiles.copy()
+        with self._lock:
+            return self._state
 
 
     """
     Sensor Management APIs
     """
 
-    def configure(self, stream : Stream, stream_profiles : set[StreamProfile]):
+    def configure(self, config : SensorConfig):
         """
         Configure the sensor so it can then stream on
         given stream configuration after the next time it's opened.
         
         Args:
-            stream: A `Stream` object where sensor pushes captured data.
-            stream_profiles: A set of `StreamProfile` objects that defines how sensor will produce data.
+            config: A `SensorConfig` object.
         """
-        self._profiles = stream_profiles.copy()
-        self._stream = stream
+        with self._lock:
+
+            if self._state != SensorState.CLOSED:
+                raise RuntimeError("Sensor must be closed to configure.")
+
+            self._conf = config
 
 
     def open(self):
@@ -101,7 +104,7 @@ class Sensor:
         Raises:
             SensorCloseError: If sensor couldn't be closed successfully.
         """
-        with self.lock:
+        with self._lock:
             self._state = SensorState.CLOSED
 
 
@@ -131,26 +134,6 @@ class Sensor:
     Sensor Information Query APIs
     """
 
-    def is_opened(self):
-        """
-        Check if sensor is physically in `Opened` state.
-
-        Raises:
-            SensorInfoError: If an error occurs while gathering the sensor information.
-        """
-        raise NotImplementedError()
-
-
-    def is_closed(self):
-        """
-        Check if sensor is physically in `Closed` state.
-
-        Raises:
-            SensorInfoError: If an error occurs while gathering the sensor information.
-        """
-        return not self.is_opened()
-
-
     def is_healthy(self):
         """
         Check if sensor is healthy under constraints passed in `options`.
@@ -166,6 +149,5 @@ class Sensor:
     """
 
     def _fail(self):
-        with self._lock:
-            self._state = SensorState.ERRORED
+        self._state = SensorState.ERRORED
         
