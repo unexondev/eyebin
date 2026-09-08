@@ -36,7 +36,7 @@ class VideoStreamProfile(StreamProfile):
         if isinstance(other, VideoStreamProfile):
             return self == other
 
-        raise TypeError("VideoStreamProfile can be matched with an instance of semantically same type.")
+        return False
 
 
     def __hash__(self):
