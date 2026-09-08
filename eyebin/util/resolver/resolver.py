@@ -14,9 +14,6 @@ class SPResolver: # StreamProfileResolver
     from stream profiles to all types of sensors.
     """
 
-    def __init__(self):
-        pass
-
     def resolve(self,
                 stream_profile : StreamProfile,
                 pvid : PVID | None = None
