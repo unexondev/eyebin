@@ -7,3 +7,6 @@
 [submodule "comcam"]
 	path = comcam
 	url = git@github.com:unexondev/comcam.git
+[submodule "backend/comcam"]
+	path = backend/comcam
+	url = git@github.com:unexondev/comcam.git
