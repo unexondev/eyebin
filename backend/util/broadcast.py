@@ -8,53 +8,11 @@ from asyncio import Queue, AbstractEventLoop, QueueFull, wait_for
 
 from comcam.stream import Stream
 
+# for debugging & test
+import logging
+from rich.pretty import pretty_repr
 
-@dataclass(frozen=True)
-class BroadcastOptions:
-    wait_stream_duration_ms : int = 100 # 100 milliseconds by default
-
-
-@dataclass(frozen=True)
-class WorkerEvents:
-    subs_synced : Event = field(default_factory=Event)
-
-
-@dataclass(frozen=True)
-class WorkerContext:
-    thread : Thread
-    events : WorkerEvents = field(default_factory=WorkerEvents)
-
-
-class Subscriber:
-
-    def __init__(self, on_unsubscribe : Callable[[], None] | None = None):
-        self.queue = Queue()    
-        self._unsub_cb = on_unsubscribe
-
-    async def wait(self, timeout_ms : float | None = None):
-
-        if timeout_ms is None:
-            return await self.queue.get()
-
-        try:
-            return await wait_for(self.queue.get(), timeout_ms / 1000)
-        
-        except TimeoutError:
-            return None
-
-    def unsubscribe(self):
-        unsub_cb = self._unsub_cb
-        if unsub_cb:
-            unsub_cb()
-
-    def set_on_unsubscribe(self, on_unsubscribe : Callable[[], None]):
-        self._unsub_cb = on_unsubscribe
-
-    def __enter__(self) -> Subscriber:
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        self.unsubscribe()       
+logger = logging.getLogger(__name__)
 
 
 class BroadcastManager:
@@ -97,7 +55,7 @@ class BroadcastManager:
             return self._mntd.copy()
 
 
-    def subscribers(self, stream : Stream) -> set[Subscriber]:
+    def subscribers(self, stream : Stream) -> set[Subscriber] | None:
 
         with self._cond_sub:
             return self._subscribers(stream)
@@ -123,6 +81,14 @@ class BroadcastManager:
 
         th_worker.start()
 
+        logger.debug(
+            "Stream mounted: %s\nCurrent mounted streams:\n%s\n"
+            "Current subscribers for mounted streams:\n%s",
+            id(stream),
+            pretty_repr(self._mntd),
+            pretty_repr(self._subs)
+            )
+
 
     def unmount(self, stream : Stream) -> None:
 
@@ -137,34 +103,46 @@ class BroadcastManager:
                 self._unmount(stream)
 
 
-    def subscribe(self, stream : Stream) -> Subscriber:
+    def subscribe(self, stream : Stream) -> Subscriber | None:
 
         with self._cond_sub:
 
             subs = self._subscribers(stream)
 
+            if subs is None:
+            
+                return None
+            
             sub = Subscriber()
 
-            def _on_unsubscribe(subs : set[Subscriber] = subs,
-                               sub : Subscriber = sub
-                               ):
+            def _unsubscribe_locked(stream : Stream = stream, 
+                                    subscriber : Subscriber = sub
+                                    ):
                 with self._cond_sub:
-                    subs.discard(sub)
+                    self._unsubscribe(stream, subscriber)
 
-            sub.set_on_unsubscribe(_on_unsubscribe)
+            sub.set_on_unsubscribe(_unsubscribe_locked)
 
             subs.add(sub)
 
             self._cond_sub.notify()
 
+            logger.debug(
+                "New subscriber (%s) has been added for stream: %s", 
+                id(sub), 
+                id(stream)
+                )
+
             return sub
 
 
-    def wait_subscribers_synced(self, stream : Stream):
+    def wait_subscribers_synced(self, stream : Stream) -> bool:
 
         with self._cond_sub:
 
-            self._sanity_check_mounted(stream)
+            if stream not in self._mntd:
+                
+                return False
 
             ctx_worker = self._worker_ctxs[stream]
 
@@ -173,25 +151,37 @@ class BroadcastManager:
         event.clear()
 
         event.wait()
+
+        return True
     
-
-    def _sanity_check_mounted(self, stream : Stream):
-        """
-        Must be called inside `with self._cond_sub:` block.
-        """
-
-        if stream not in self._mntd:
-            raise RuntimeError("Stream is not mounted: %r" % stream)
-
 
     def _subscribers(self, stream : Stream):
         """
         Must be called inside `with self._cond_sub:` block.
         """
-        
-        self._sanity_check_mounted(stream)
+    
+        return self._subs.get(stream, None)
 
-        return self._subs[stream]
+
+    def _unsubscribe(self, stream : Stream, subscriber : Subscriber):
+        """
+        Must be called inside `with self._cond_sub:` block.
+        """
+
+        subs = self._subscribers(stream)
+
+        if subs is None:
+            return False
+
+        subs.discard(subscriber)
+
+        logger.debug(
+            "Subscriber (%s) has been removed from stream: %s",
+            id(subscriber), 
+            id(stream)
+            )
+
+        return True
 
 
     def _unmount(self, stream : Stream):
@@ -211,10 +201,23 @@ class BroadcastManager:
         # worker will stop automatically since we
         # removed the stream from mounted stream list
         
+        logger.debug(
+            "Stream unmounted: %s\nCurrent mounted streams:\n%s\n"
+            "Current subscribers for mounted streams:\n%s",
+            id(stream), 
+            pretty_repr(self._mntd),
+            pretty_repr(self._subs)
+            )
+
         return
     
 
     def _worker(self, stream : Stream):
+
+        logger.debug(
+            "New worker is just started for stream: %s",
+            id(stream)
+            )
 
         opts = self._opts
 
@@ -228,9 +231,15 @@ class BroadcastManager:
                 while True:
 
                     if stream not in self._mntd: # unmounted
+
+                        logger.debug(
+                            "Worker is being terminated for stream: %s", 
+                            id(stream)
+                            )
+
                         return self._unmount(stream)
 
-                    if self._subs[stream]: # got a subscriber
+                    if self._subscribers(stream) is not None: # got a subscriber
                         break
 
                     # wait while there is no subscribers
@@ -238,7 +247,7 @@ class BroadcastManager:
 
                 events.subs_synced.set() # signal subscribers are about to synced
 
-                subs = self._subs[stream].copy()
+                subs = self._subscribers(stream).copy()
 
             # now we safely had subs, let's send them data 
 
@@ -262,6 +271,54 @@ class BroadcastManager:
             _queue.put_nowait(_item)
         except QueueFull:
             pass
+
+
+class Subscriber:
+
+    def __init__(self, on_unsubscribe : Callable[[Subscriber], None] | None = None):
+        self.queue = Queue()    
+        self._unsub_cb = on_unsubscribe
+
+    async def wait(self, timeout_ms : float | None = None):
+
+        if timeout_ms is None:
+            return await self.queue.get()
+
+        try:
+            return await wait_for(self.queue.get(), timeout_ms / 1000)
+        
+        except TimeoutError:
+            return None
+
+    def unsubscribe(self):
+        unsub_cb = self._unsub_cb
+        if unsub_cb:
+            unsub_cb()
+
+    def set_on_unsubscribe(self, on_unsubscribe : Callable[[Subscriber,], None]):
+        self._unsub_cb = on_unsubscribe
+
+    def __enter__(self) -> Subscriber:
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.unsubscribe()   
+
+
+@dataclass(frozen=True)
+class BroadcastOptions:
+    wait_stream_duration_ms : int = 100 # 100 milliseconds by default
+
+
+@dataclass(frozen=True)
+class WorkerEvents:
+    subs_synced : Event = field(default_factory=Event)
+
+
+@dataclass(frozen=True)
+class WorkerContext:
+    thread : Thread
+    events : WorkerEvents = field(default_factory=WorkerEvents)    
 
 
 def _now_as_milliseconds() -> int:
