@@ -18,13 +18,14 @@ from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, De
 # For testing & debugging
 import os
 import logging
+from rich.pretty import pretty_repr
+
+logger = logging.getLogger(__name__)
 
 # MOCK_MODE = os.getenv("MOCK_MODE", "false").lower() == "true"
 
 # if MOCK_MODE:
 #    from ..mock.stream import *
-
-logger = logging.getLogger(__name__)
 
 
 # FastAPI definitions
@@ -34,6 +35,8 @@ router = APIRouter(prefix="/stream")
 def start_stream(params : StartStreamRequest, 
                  bc_manager : BroadcastManager = Depends(broadcast_manager_from_request)
                  ):
+
+    logger.debug("Start stream request received:\n%s", pretty_repr(params))
     
     if not params.profiles:
         return HTTPException(
@@ -71,7 +74,7 @@ def start_stream(params : StartStreamRequest,
             stream=stream
             )
 
-        bc_manager.mount(profile, stream) # mount to broadcast manager
+        bc_manager.mount(stream) # mount to broadcast manager
         
 
     try:
@@ -89,6 +92,8 @@ def start_stream(params : StartStreamRequest,
             detail="Couldn't start sensor. Traceback is logged to the server."
             )
 
+    logger.debug("Stream has been started.")
+
     return StatusResponse(
         message="Sensor has been started successfully."
         ) # OK
@@ -98,6 +103,8 @@ def start_stream(params : StartStreamRequest,
 def stop_stream(params : StartStreamRequest,
                 bc_manager : BroadcastManager = Depends(broadcast_manager_from_request)
                 ):
+
+    logger.debug("Stop stream request received:\n%s", pretty_repr(params))
 
     if not params.profiles:
         return HTTPException(
@@ -141,6 +148,8 @@ def stop_stream(params : StartStreamRequest,
             detail="Couldn't close sensor. Traceback is logged to the server."
             )
 
+    logger.debug("Stream has been stopped.")
+
     return StatusResponse(
         message="Stream has been ended successfully."
         ) # OK
@@ -156,6 +165,12 @@ async def ws_stream(socket : WebSocket,
 
     # accept connection
     await socket.accept()
+
+    logger.debug(
+        "Consumer websocket connection established from %s:%s",
+        socket.client.host,
+        socket.client.port
+        )
 
     # get stream
     stream : Stream = CacheManager.get(stream.id)
@@ -181,7 +196,7 @@ async def ws_stream(socket : WebSocket,
                     break
 
                 try:
-                    socket.send_bytes(data)
+                    socket.send_bytes(data) # TODO
                 except (RuntimeError, WebSocketDisconnect):
                     # socket is probably disconnected
                     break
