@@ -1,2 +1,3 @@
 fastapi[standart]
 uvicorn
+pillow
