@@ -7,8 +7,11 @@ class Encoder:
     Common interface for all encoder implementations.
     """
 
-    def encodable(self, format: StreamFormat):
+    def encodable_formats(self) -> set[StreamFormat]:
         raise NotImplementedError()
 
-    def encode(self, data : NDArray, format : StreamFormat):
+    def encodable(self, format: StreamFormat) -> bool:
+        return format in self.encodable_formats()
+
+    def encode(self, data : NDArray, format : StreamFormat) -> bytes:
         raise NotImplementedError()

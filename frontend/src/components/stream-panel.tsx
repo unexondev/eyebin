@@ -2,8 +2,8 @@ import axios from "axios"
 
 import { useEffect, useState, useRef } from "react"
 
-import { getStreamProfileLabel, SensorState, RENDERABLE_FORMATS, profilesEquivalent } from "@/lib/defs"
-import type { SensorResponse, StreamProfileModelType, AppActions, StatusResponse, StreamModel } from "@/lib/defs"
+import { getStreamProfileLabel, SensorState, profilesEquivalent } from "@/lib/defs"
+import type { SensorResponse, StreamProfileModelType, AppActions, StatusResponse, StreamFormat } from "@/lib/defs"
 
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
@@ -14,7 +14,6 @@ import {
     SelectContent,
     SelectGroup,
     SelectItem,
-    SelectLabel,
     SelectTrigger,
     SelectValue,
 } from "@/components/ui/select"
@@ -23,15 +22,22 @@ import { FaCircle } from "react-icons/fa";
 import { CgSpinnerTwoAlt } from "react-icons/cg";
 import { AiOutlineDisconnect } from "react-icons/ai";
 import { api } from "@/lib/api"
+import { createSnapshot, ssdb, MAX_SNAPSHOT_COUNT } from "@/lib/db"
 
 
 interface StreamPanelProps {
     appActions: AppActions
     sensors: SensorResponse[] | null
     loadSensors: () => void
+    encodableFormats: StreamFormat[] | null
 }
 
-export default function StreamPanel({ appActions, sensors, loadSensors }: StreamPanelProps) {
+interface ImageData {
+    image_url : string;
+    image_blob : Blob;
+}
+
+export default function StreamPanel({ appActions, sensors, loadSensors, encodableFormats }: StreamPanelProps) {
 
     const [ sensor_id_selected, setSensorIdSelected ] = useState<string | null>(null);
 
@@ -44,6 +50,8 @@ export default function StreamPanel({ appActions, sensors, loadSensors }: Stream
     const profile_selected = profile_idx_selected != null ? profiles[profile_idx_selected] : undefined 
 
     const socket = useRef<WebSocket | null>(null);
+
+    const [ image_data, setImageData ] = useState<ImageData | undefined>(undefined);
 
     function is_profile_active(profile : StreamProfileModelType): boolean | undefined {
         return is_selected_sensor_streaming() && sensor_selected?.config.entries.some((entry) => profilesEquivalent(profile, entry.profile));
@@ -61,7 +69,8 @@ export default function StreamPanel({ appActions, sensors, loadSensors }: Stream
 			
 			await api.post<StatusResponse>("/stream/start", {
                 sensor_id: sensor_id_selected as string,
-                profiles: [profile_selected] as StreamProfileModelType[]
+                profiles: [profile_selected] as StreamProfileModelType[],
+                encode: true // encode it to image
             });
 
             appActions.pushNotification("Stream has been started succesfully.")
@@ -123,9 +132,35 @@ export default function StreamPanel({ appActions, sensors, loadSensors }: Stream
 
             loadSensors()
 
-			// appActions.setReady()
-
 		}
+
+    }
+
+    async function saveSnapshot() {
+
+        if (!image_data || !sensor_selected) {
+            return;
+        }
+
+        appActions.setLoading()
+
+        const count = await ssdb.snapshots.count();
+
+        if (count > MAX_SNAPSHOT_COUNT) {
+            const oldest = await ssdb.snapshots
+                .orderBy("timestamp")
+                .first();
+
+            if (oldest) {
+                await ssdb.snapshots.delete(oldest.id);
+            }
+        }
+
+        await ssdb.snapshots.add(
+            createSnapshot(image_data.image_blob, sensor_selected)
+        )
+
+        appActions.setReady()
 
     }
 
@@ -152,8 +187,16 @@ export default function StreamPanel({ appActions, sensors, loadSensors }: Stream
             }).toString()
 
         const ws = socket.current = new WebSocket(`ws://localhost:8000/api/stream/consume?${params}`);
+        ws.binaryType = "blob"
 
         ws.onclose = () => {
+
+            setImageData(prev => {
+                if (prev) {
+                    URL.revokeObjectURL(prev.image_url);
+                }
+                return undefined;
+            });
 
             appActions.pushNotification("Connection with the stream provider has been closed.");
 
@@ -171,6 +214,19 @@ export default function StreamPanel({ appActions, sensors, loadSensors }: Stream
 
         }
 
+        ws.onmessage = (event) => {
+                const url = URL.createObjectURL(event.data);
+                setImageData(prev => {
+                    if (prev) {
+                        URL.revokeObjectURL(prev.image_url);
+                    }
+                    return {
+                        image_url: url,
+                        image_blob : event.data
+                    };
+                });
+            };
+
         return () => {
             if (ws.readyState < WebSocket.CLOSING) // [ CONNECTING, OPEN ]
                 ws.close()
@@ -187,7 +243,7 @@ export default function StreamPanel({ appActions, sensors, loadSensors }: Stream
                     {
                         profile_selected && is_profile_active(profile_selected) && socket.current ? (
                             
-                            socket.current.readyState === WebSocket.CONNECTING ? (
+                            socket.current.readyState === WebSocket.CONNECTING || !image_data ? (
                                 <div className="absolute inset-0 flex items-center justify-center">
                                     <CgSpinnerTwoAlt className="animate-spin" size="2.5rem"/>
                                 </div>
@@ -197,7 +253,7 @@ export default function StreamPanel({ appActions, sensors, loadSensors }: Stream
                                         <AiOutlineDisconnect size="2.5rem"/>
                                     </div>
                                 ) : (
-                                    <img></img>
+                                    <img src={image_data.image_url} className="w-full h-full object-contain"/>
                                 )
                             )
 
@@ -281,7 +337,7 @@ export default function StreamPanel({ appActions, sensors, loadSensors }: Stream
                             <SelectContent>
                                 <SelectGroup>
                                 {
-                                    profiles.filter(profile => RENDERABLE_FORMATS.includes(profile.format))
+                                    profiles.filter(profile => encodableFormats && encodableFormats.includes(profile.format))
                                         .map((profile, idx) => (
                                             <SelectItem key={idx} value={idx} disabled={is_selected_sensor_streaming() && !is_profile_active(profile)}>
                                                 
@@ -345,7 +401,7 @@ export default function StreamPanel({ appActions, sensors, loadSensors }: Stream
             <div className="p-5 flex justify-end gap-3">
 
                 <Button className="relative" size="lg" onClick={loadSensors}>Refresh</Button>
-                <Button className="relative" size="lg">Snapshot</Button>
+                <Button className="relative" size="lg" onClick={saveSnapshot}>Snapshot</Button>
 
             </div>
 

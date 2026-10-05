@@ -69,8 +69,7 @@ def test_broadcast_semantically_consistent(
 
     stream = Stream()
 
-    with pytest.raises(RuntimeError):
-        bc_mgr.subscribers(stream)
+    assert bc_mgr.subscribers(stream) is None
     
     bc_mgr.mount(stream)
 
@@ -90,8 +89,7 @@ def test_broadcast_semantically_consistent(
 
     bc_mgr.unmount(stream)
 
-    with pytest.raises(RuntimeError):
-        bc_mgr.subscribers(stream)
+    assert bc_mgr.subscribers(stream) is None
 
     assert not bc_mgr.mounted_streams()
 
@@ -114,8 +112,11 @@ def test_broadcast_data_arrival(
     # add subscribers
     sub_0_stream_0 = bc_mgr.subscribe(stream_0)
     sub_1_stream_0 = bc_mgr.subscribe(stream_0)
+    bc_mgr.wait_subscribers_synced(stream_0)
+
     sub_0_stream_1 = bc_mgr.subscribe(stream_1)
     sub_1_stream_1 = bc_mgr.subscribe(stream_1)
+    bc_mgr.wait_subscribers_synced(stream_1)
 
     in_stream_0 = np.asarray(
         [0xA, 0xB, 0xC],
@@ -143,13 +144,13 @@ def test_broadcast_data_arrival(
         event_loop
         ) # will instanly get their distributed data
 
-    results : tuple[NDArray] = future.result()
+    results : tuple[bytes] = future.result()
 
     assert (
-        np.array_equal(results[0], in_stream_0) and
-        np.array_equal(results[1], in_stream_0) and
-        np.array_equal(results[2], in_stream_1) and
-        np.array_equal(results[3], in_stream_1)
+        results[0] == in_stream_0.tobytes() and
+        results[1] == in_stream_0.tobytes() and
+        results[2] == in_stream_1.tobytes() and
+        results[3] == in_stream_1.tobytes()
         )
 
     future = asyncio.run_coroutine_threadsafe(
@@ -172,10 +173,10 @@ def test_broadcast_data_arrival(
     results : tuple[NDArray] = future.result()
 
     assert (
-        np.array_equal(results[0], in_stream_0) and
-        np.array_equal(results[1], in_stream_0) and
-        np.array_equal(results[2], in_stream_1) and
-        np.array_equal(results[3], in_stream_1)
+        results[0] == in_stream_0.tobytes() and
+        results[1] == in_stream_0.tobytes() and
+        results[2] == in_stream_1.tobytes() and
+        results[3] == in_stream_1.tobytes()
         )
 
 
@@ -196,6 +197,7 @@ def test_data_arrival_subscriber_leaves(
 
     sub_dead = bc_mgr.subscribe(stream)
     sub_alive = bc_mgr.subscribe(stream)
+    bc_mgr.wait_subscribers_synced(stream)
 
     async def wait_from(subscriber : Subscriber):
         return await subscriber.wait()
@@ -218,8 +220,8 @@ def test_data_arrival_subscriber_leaves(
     results : tuple[NDArray] = future.result()
 
     assert (
-        np.array_equal(results[0], in_before_leave) and
-        np.array_equal(results[1], in_before_leave)
+        results[0] == in_before_leave.tobytes() and
+        results[1] == in_before_leave.tobytes()
         )
 
     # now get data while one of the subscribers is left

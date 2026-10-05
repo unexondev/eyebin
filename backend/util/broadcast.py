@@ -6,7 +6,9 @@ from threading import Thread, Condition, Event
 from typing import Callable
 from asyncio import Queue, AbstractEventLoop, QueueFull, wait_for
 
-from comcam.stream import Stream
+from .encoder import Encoder, UnsupportedFormatError
+
+from comcam.stream import Stream, StreamFormat
 
 # for debugging & test
 import logging
@@ -22,13 +24,16 @@ class BroadcastManager:
     """
 
     def __init__(self,
-                 options : BroadcastOptions, 
-                 event_loop : AbstractEventLoop | None = None
+                 options : BroadcastOptions,
+                 event_loop : AbstractEventLoop | None = None,
+                 encoder : Encoder | None = None
                  ):
 
         self._opts : BroadcastOptions = options
 
         self._loop : AbstractEventLoop | None = event_loop
+
+        self._enc : Encoder | None = encoder
 
         self._mntd : set[Stream] = set()
 
@@ -36,7 +41,14 @@ class BroadcastManager:
 
         self._worker_ctxs : dict[Stream, WorkerContext] = {}
 
+        self._fmts : dict[Stream, StreamFormat] = {}
+
         self._cond_sub = Condition()
+
+
+    @property
+    def encoder(self) -> Encoder | None:
+        return self._enc
 
 
     def init_event_loop(self, event_loop : AbstractEventLoop):
@@ -61,7 +73,10 @@ class BroadcastManager:
             return self._subscribers(stream)
 
 
-    def mount(self, stream : Stream) -> None:
+    def mount(self,
+              stream : Stream,
+              format : StreamFormat | None = None
+              ) -> None:
 
         th_worker = Thread(
             target=self._worker, 
@@ -78,6 +93,9 @@ class BroadcastManager:
             self._subs[stream] = set()
 
             self._worker_ctxs[stream] = ctx_worker
+
+            if format is not None and self._enc is not None:
+                self._fmts[stream] = format
 
         th_worker.start()
 
@@ -198,6 +216,9 @@ class BroadcastManager:
         # delete from worker map if exists
         self._worker_ctxs.pop(stream, None)
 
+        if self._enc is not None:
+            self._fmts.pop(stream, None)
+
         # worker will stop automatically since we
         # removed the stream from mounted stream list
         
@@ -209,8 +230,6 @@ class BroadcastManager:
             pretty_repr(self._subs)
             )
 
-        return
-    
 
     def _worker(self, stream : Stream):
 
@@ -256,12 +275,34 @@ class BroadcastManager:
             if data is None:
                 continue
 
+            bs : bytes
+            # format data if encoder exists and format is given
+            if self._enc is not None:
+                
+                format = self._fmts.get(stream, None)
+                
+                if format is not None:
+                    
+                    try:
+                        bs = self._enc.encode(data, format)
+                    
+                    except UnsupportedFormatError:        
+                        with self._cond_sub:
+                            self._unmount(stream)
+                        raise
+                
+                else:
+                    bs = data.tobytes()
+            
+            else:
+                bs = data.tobytes()
+
             for sub in subs:
 
                 self._loop.call_soon_threadsafe(
                     self._try_put_nowait, 
                     sub.queue, 
-                    data
+                    bs
                     )
 
 
@@ -279,7 +320,7 @@ class Subscriber:
         self.queue = Queue()    
         self._unsub_cb = on_unsubscribe
 
-    async def wait(self, timeout_ms : float | None = None):
+    async def wait(self, timeout_ms : float | None = None) -> bytes | None:
 
         if timeout_ms is None:
             return await self.queue.get()
@@ -318,9 +359,4 @@ class WorkerEvents:
 @dataclass(frozen=True)
 class WorkerContext:
     thread : Thread
-    events : WorkerEvents = field(default_factory=WorkerEvents)    
-
-
-def _now_as_milliseconds() -> int:
-    from time import monotonic_ns
-    return monotonic_ns() // 1_000_000
+    events : WorkerEvents = field(default_factory=WorkerEvents)

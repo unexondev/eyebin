@@ -1,6 +1,6 @@
 import axios from "axios"
 import { api } from "./lib/api"
-import type { AppContext, AppActions, SensorResponse } from "./lib/defs"
+import type { AppContext, AppActions, SensorResponse, StreamFormat } from "./lib/defs"
 import { AppState } from "./lib/defs"
 
 import { Separator } from "@/components/ui/separator"
@@ -120,6 +120,7 @@ export function App() {
 
 	// context states
 	const [sensors, setSensors] = useState<SensorResponse[] | null>(null);
+	const [encodableFormats, setEncodableFormats] = useState<StreamFormat[] | null>(null);
 
 	// navigation states
 	const [left_panel_selected, setLeftPanel] = useState(LeftPanelOption.Stream)
@@ -131,11 +132,11 @@ export function App() {
 	switch (left_panel_selected) {
 
 		case LeftPanelOption.Stream:
-			left_panel = <StreamPanel appActions={appActions} sensors={sensors} loadSensors={loadSensors}/>
+			left_panel = <StreamPanel appActions={appActions} sensors={sensors} loadSensors={loadSensors} encodableFormats={encodableFormats}/>
 			break
 
 		case LeftPanelOption.Monitor:
-			left_panel = <MonitorPanel/>
+			left_panel = <MonitorPanel appActions={appActions}/>
 			break
 
 		case LeftPanelOption.Settings:
@@ -166,9 +167,42 @@ export function App() {
 
 		try {
 			
-			const res = await api.get<SensorResponse[]>("/sensor/fetch");
+			const res = await api.get<SensorResponse[]>("/sensor/fetch-all");
 			
 			setSensors(res.data);
+			
+		} catch (error: any) {
+			
+			if (axios.isAxiosError(error)) {
+				appActions.pushError(
+					error.response?.data?.detail ??
+					"An error occured while establishing connection."
+				);
+			}
+
+			else {
+				appActions.pushError("An unexpected error occured.");
+			}
+		
+		}
+
+		finally {
+
+			appActions.setReady();
+
+		}
+
+	}
+
+	async function loadEncodableFormats() {
+
+		appActions.setLoading()
+
+		try {
+			
+			const res = await api.get<StreamFormat[]>("/stream/encodable-formats");
+			
+			setEncodableFormats(res.data);
 			
 		} catch (error: any) {
 			
@@ -198,6 +232,8 @@ export function App() {
 		appActions.pushNotification("Welcome! We strongly recommend reading our documentation before starting.")
 
 		loadSensors();
+
+		loadEncodableFormats();
 
 	}, []);
 
@@ -254,9 +290,9 @@ export function App() {
 				)
 			}
 			
-			<div className="flex flex-col min-w-full lg:flex-row lg:h-full">
+			<div className="flex flex-col min-w-full xl:flex-row xl:h-full">
 				
-				<div className="flex flex-col lg:h-full lg:flex-1">
+				<div className="flex flex-col xl:h-full xl:w-1/2">
 
 					<ToggleGroup className="p-3 flex-0">
 
@@ -289,10 +325,10 @@ export function App() {
 
 				</div>
 
-				<Separator orientation="vertical" className="hidden lg:block"/>
-				<Separator orientation="horizontal" className="lg:hidden"/>
+				<Separator orientation="vertical" className="hidden xl:block"/>
+				<Separator orientation="horizontal" className="xl:hidden"/>
 					
-				<div className="flex flex-col lg:h-full lg:w-1/2">
+				<div className="flex flex-col xl:h-full xl:w-1/2">
 
 					<ToggleGroup className="p-3">
 

@@ -74,3 +74,8 @@ class StreamConfigModel(BaseModel):
 class StartStreamRequest(BaseModel):
     sensor_id : UUID
     profiles: list[StreamProfileModelType]
+    encode: bool
+
+class StopStreamRequest(BaseModel):
+    sensor_id : UUID
+    profiles: list[StreamProfileModelType]

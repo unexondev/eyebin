@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .encoder import Encoder
+from .exceptions import *
 
 from comcam.stream.profile import StreamFormat
 
@@ -42,12 +43,20 @@ class JPEGEncoder(Encoder):
             self._encoders.update(encoders)
 
     
-    def encodable(self, format):
-        return format in self._encoders
+    def encodable_formats(self):
+        return set(self._encoders)
 
 
     def encode(self, data : NDArray, format : StreamFormat):
-        return self._encoders[format](data)
+        
+        enc = self._encoders.get(format, None)
+        
+        if enc is None:
+            raise UnsupportedFormatError(
+                "JPEGEncoder cannot encode format: %s" % format
+                )
+
+        return enc(data) # encode and return
 
     
     """

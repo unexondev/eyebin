@@ -1,3 +1,6 @@
 fastapi[standart]
 uvicorn
 pillow
+psutil
+nvidia-ml-py # for Nvidia GPUs
+amdsmi # for AMD GPUs

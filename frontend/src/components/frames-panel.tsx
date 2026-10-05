@@ -1,9 +1,129 @@
+import { ssdb } from "@/lib/db";
+import { useLiveQuery } from "dexie-react-hooks"
+
+import {
+  Attachment,
+  AttachmentAction,
+  AttachmentActions,
+  AttachmentContent,
+  AttachmentDescription,
+  AttachmentMedia,
+  AttachmentTitle,
+  AttachmentTrigger
+} from "@/components/ui/attachment"
+import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+
+import { MdDeleteOutline } from "react-icons/md";
+import { useEffect, useState } from "react";
+
+import { LuMousePointerClick } from "react-icons/lu";
+
+
 export default function FramesPanel() {
 
+    const snapshots = useLiveQuery(
+        () => ssdb.snapshots.orderBy("timestamp").reverse().toArray()
+    );
+    
+    const [ image_urls, setImageUrls ] = useState<string[]>([]);
+
+    const [ image_idx_selected, setImageIdxSelected ] = useState<number | null>(null);
+
+    useEffect(() => {
+
+        image_urls.forEach(URL.revokeObjectURL)
+        
+        setImageUrls(
+            snapshots?.map(
+                snapshot => URL.createObjectURL(snapshot.image)
+            ) ?? []
+        )
+
+        return () => {
+            image_urls.forEach(URL.revokeObjectURL);
+            setImageUrls([])
+        };
+
+    }, [ snapshots ])
+
     return (
-        <>
-            FramesPanel
-        </>
+        <div className="@container flex flex-col h-full w-full gap-10 p-5">
+
+            <div className="flex flex-row items-center justify-center gap-3 text-primary/50 text-lg">
+                <LuMousePointerClick size="1.5rem"/>
+                Click on an image to view annotation panel
+            </div>
+
+            <div className="grid grid-cols-2 gap-5">
+
+                {
+                    snapshots ? (
+
+                        snapshots.map((snapshot, idx) => (
+
+                            <Attachment key={snapshot.id} orientation="horizontal" className="w-full">
+
+                                <AttachmentMedia variant="image">
+                                    <img src={image_urls[idx]} alt={`${snapshot.sensor.device_name} - ${snapshot.sensor.device_serial_number}`}/>
+                                </AttachmentMedia>
+
+                                <AttachmentContent>
+                                    <AttachmentTitle>{snapshot.sensor.device_name}</AttachmentTitle>
+                                    <AttachmentDescription>{new Date(snapshot.timestamp).toLocaleString()}</AttachmentDescription>
+                                </AttachmentContent>
+
+                                <AttachmentActions>
+                                    <AttachmentAction aria-label={`Remove ${snapshot.id}`} onClick={
+                                        () => { ssdb.snapshots.delete(snapshot.id) }
+                                        }>
+                                        <MdDeleteOutline />
+                                    </AttachmentAction>
+                                </AttachmentActions>
+
+                            <AttachmentTrigger
+                                render={
+                                    <a href="" onClick={(e) => {
+                                        e.preventDefault();
+                                        setImageIdxSelected(idx);
+                                    }}/>
+                                }
+                            />
+
+                            </Attachment>
+
+                        ))
+
+                    ) : (
+                        null
+                    )
+                }
+
+            </div>
+
+            <Dialog open={image_idx_selected !== null} onOpenChange={open_state => !open_state && setImageIdxSelected(null)} >
+                <DialogContent className="w-[90vw] h-[90vh] max-w-none sm:max-w-none">
+                    <DialogHeader>
+                        <DialogTitle>Annotate Snapshot</DialogTitle>
+                        <DialogDescription>Annotations made on a snapshot then can be passed to a ML model.</DialogDescription>
+                    </DialogHeader>
+                    <div>selam</div>
+                    <DialogFooter>
+                        <DialogClose render={<Button variant="outline" onClick={() => setImageIdxSelected(null)}>Cancel</Button>} />
+                        <Button type="submit">Save changes</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+        </div>
     )
 
 }

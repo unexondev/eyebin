@@ -1,5 +1,5 @@
 from ..models.response import StatusResponse
-from ..models.stream import StartStreamRequest, StreamModel
+from ..models.stream import StartStreamRequest, StopStreamRequest, StreamModel
 
 from ..util.cache import CacheManager
 from ..util.broadcast import BroadcastManager
@@ -9,7 +9,7 @@ from ..util.state import broadcast_manager_from_request, broadcast_manager_from_
 # import Comcam
 from comcam.core.sensor import Sensor, SensorState
 from comcam.core.sensor.exceptions import *
-from comcam.stream import Stream
+from comcam.stream import Stream, StreamFormat
 
 
 # import FastAPI
@@ -60,6 +60,21 @@ def start_stream(params : StartStreamRequest,
 
     # Now we know that sensor is closed, try to open and start it.
 
+    # check all formats are encodable
+    if params.encode:
+        encoder = bc_manager.encoder
+        if encoder is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Couldn't find any encoder, encoding feature might be disabled."
+                )
+        for profile in params.profiles:
+            if not encoder.encodable(profile.format):
+                raise HTTPException(
+                    status_code=409,
+                    detail="Format is not encodable: %s" % profile.format.name
+                    )
+
     # clear last configuration
     sensor.config.clear()
 
@@ -74,7 +89,10 @@ def start_stream(params : StartStreamRequest,
             stream=stream
             )
 
-        bc_manager.mount(stream) # mount to broadcast manager
+        bc_manager.mount(
+            stream=stream,
+            format=profile.format if params.encode else None
+            ) # mount to broadcast manager
         
 
     try:
@@ -100,7 +118,7 @@ def start_stream(params : StartStreamRequest,
 
 
 @router.post("/stop", response_model=StatusResponse)
-def stop_stream(params : StartStreamRequest,
+def stop_stream(params : StopStreamRequest,
                 bc_manager : BroadcastManager = Depends(broadcast_manager_from_request)
                 ):
 
@@ -155,6 +173,11 @@ def stop_stream(params : StartStreamRequest,
         ) # OK
 
 
+@router.get("/encodable-formats", response_model=set[StreamFormat])
+def get_encodable_formats(bc_manager : BroadcastManager = Depends(broadcast_manager_from_request)):
+    return bc_manager.encoder.encodable_formats()
+
+
 # Websocket definitions
 
 @router.websocket("/consume")
@@ -176,35 +199,36 @@ async def ws_stream(socket : WebSocket,
     stream : Stream = CacheManager.get(stream.id)
     
     if stream is None:
-        await socket.close(
-            code=404,
-            reason="Couldn't find stream, please restart the session."
-            )
-        
+        try:
+            await socket.close(
+                reason="Couldn't find stream, please restart the session."
+                )
+        except (RuntimeError, WebSocketDisconnect):
+            pass
         return
 
-    try:
-        with bc_manager.subscribe(stream) as sub:
+    subscriber = bc_manager.subscribe(stream)
             
-            while True:
-            
-                data = await sub.wait(1000) # wait for a second for data arrival
-
-                if data is None:
-                    # producer (sensor) is either errored or closed
-                    bc_manager.unmount(stream) # unmount it
-                    break
-
-                try:
-                    socket.send_bytes(data) # TODO
-                except (RuntimeError, WebSocketDisconnect):
-                    # socket is probably disconnected
-                    break
+    while True:
     
-    except RuntimeError:
-        await socket.close(
-            code=404,
-            reason="Stream seems to be unmounted, please restart the stream."
-            )
+        bs = await subscriber.wait(1000) # wait for a second for data arrival
 
-    # socket unsubscribes here
+        if bs is None:
+            # producer (sensor) is either
+            # unstable, closed or errored
+            bc_manager.unmount(stream) # unmount it
+            try:
+                await socket.close(
+                    reason="Stream seems to be unmounted, please restart the stream."
+                    )
+            except (RuntimeError, WebSocketDisconnect):
+                pass
+            return
+
+        try:
+            await socket.send_bytes(bs) # send bytes to the socket
+
+        except (RuntimeError, WebSocketDisconnect):
+            # socket is probably disconnected
+            subscriber.unsubscribe()
+            return
