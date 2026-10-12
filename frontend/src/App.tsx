@@ -292,7 +292,7 @@ export function App() {
 			
 			<div className="flex flex-col min-w-full xl:flex-row xl:h-full">
 				
-				<div className="flex flex-col xl:h-full xl:w-1/2">
+				<div className="flex flex-col xl:h-screen xl:w-[50vw]">
 
 					<ToggleGroup className="p-3 flex-0">
 
@@ -328,7 +328,7 @@ export function App() {
 				<Separator orientation="vertical" className="hidden xl:block"/>
 				<Separator orientation="horizontal" className="xl:hidden"/>
 					
-				<div className="flex flex-col xl:h-full xl:w-1/2">
+				<div className="flex flex-col xl:h-screen xl:w-[50vw]">
 
 					<ToggleGroup className="p-3">
 
@@ -355,7 +355,7 @@ export function App() {
 
 					</ToggleGroup>
 
-					<div className="flex-1 relative left-panel-view">
+					<div className="flex-1 min-h-0 relative right-panel-view">
 						{ right_panel }
 					</div>
 

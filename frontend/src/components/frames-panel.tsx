@@ -1,4 +1,6 @@
 import { ssdb } from "@/lib/db";
+
+import { useEffect, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks"
 
 import {
@@ -21,10 +23,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { ScrollArea } from "@/components/ui/scroll-area";
+
+import AnnotationPanel from "@/components/annotation-panel";
 
 import { MdDeleteOutline } from "react-icons/md";
-import { useEffect, useState } from "react";
-
+import { RiImageUploadLine } from "react-icons/ri";
 import { LuMousePointerClick } from "react-icons/lu";
 
 
@@ -56,58 +60,64 @@ export default function FramesPanel() {
     }, [ snapshots ])
 
     return (
-        <div className="@container flex flex-col h-full w-full gap-10 p-5">
+        <div className="@container flex flex-col h-full w-full gap-5 p-3">
 
             <div className="flex flex-row items-center justify-center gap-3 text-primary/50 text-lg">
                 <LuMousePointerClick size="1.5rem"/>
                 Click on an image to view annotation panel
             </div>
 
-            <div className="grid grid-cols-2 gap-5">
+            <ScrollArea className="flex-1 min-h-0 px-5">
 
-                {
-                    snapshots ? (
+                <div className="grid grid-cols-2 gap-5">
 
-                        snapshots.map((snapshot, idx) => (
+                    {
+                        snapshots ? (
 
-                            <Attachment key={snapshot.id} orientation="horizontal" className="w-full">
+                            snapshots.map((snapshot, idx) => (
 
-                                <AttachmentMedia variant="image">
-                                    <img src={image_urls[idx]} alt={`${snapshot.sensor.device_name} - ${snapshot.sensor.device_serial_number}`}/>
-                                </AttachmentMedia>
+                                <Attachment key={snapshot.id} orientation="horizontal" className="w-full">
 
-                                <AttachmentContent>
-                                    <AttachmentTitle>{snapshot.sensor.device_name}</AttachmentTitle>
-                                    <AttachmentDescription>{new Date(snapshot.timestamp).toLocaleString()}</AttachmentDescription>
-                                </AttachmentContent>
+                                    <AttachmentMedia variant="image">
+                                        <img src={image_urls[idx]} alt={`${snapshot.sensor.device_name} - ${snapshot.sensor.device_serial_number}`}/>
+                                    </AttachmentMedia>
 
-                                <AttachmentActions>
-                                    <AttachmentAction aria-label={`Remove ${snapshot.id}`} onClick={
-                                        () => { ssdb.snapshots.delete(snapshot.id) }
-                                        }>
-                                        <MdDeleteOutline />
-                                    </AttachmentAction>
-                                </AttachmentActions>
+                                    <AttachmentContent>
+                                        <AttachmentTitle>{snapshot.sensor.device_name}</AttachmentTitle>
+                                        <AttachmentDescription>{new Date(snapshot.timestamp).toLocaleString()}</AttachmentDescription>
+                                    </AttachmentContent>
 
-                            <AttachmentTrigger
-                                render={
-                                    <a href="" onClick={(e) => {
-                                        e.preventDefault();
-                                        setImageIdxSelected(idx);
-                                    }}/>
-                                }
-                            />
+                                    <AttachmentActions>
+                                        <AttachmentAction aria-label={`Remove ${snapshot.id}`} onClick={
+                                            () => { ssdb.snapshots.delete(snapshot.id) }
+                                            }>
+                                            <MdDeleteOutline />
+                                        </AttachmentAction>
+                                    </AttachmentActions>
 
-                            </Attachment>
+                                <AttachmentTrigger
+                                    render={
+                                        <a href="" onClick={(e) => {
+                                            e.preventDefault();
+                                            setImageIdxSelected(idx);
+                                        }}/>
+                                    }
+                                />
 
-                        ))
+                                </Attachment>
 
-                    ) : (
-                        null
-                    )
-                }
+                            ))
 
-            </div>
+                        ) : (
+                            null
+                        )
+                    }
+
+                </div>
+
+            </ScrollArea>
+
+            <Button className="py-5" variant="outline"><RiImageUploadLine/> Upload an image</Button>
 
             <Dialog open={image_idx_selected !== null} onOpenChange={open_state => !open_state && setImageIdxSelected(null)} >
                 <DialogContent className="w-[90vw] h-[90vh] max-w-none sm:max-w-none">
@@ -115,7 +125,9 @@ export default function FramesPanel() {
                         <DialogTitle>Annotate Snapshot</DialogTitle>
                         <DialogDescription>Annotations made on a snapshot then can be passed to a ML model.</DialogDescription>
                     </DialogHeader>
-                    <div>selam</div>
+                    {
+                        image_idx_selected !== null ? <AnnotationPanel image_url={image_urls[image_idx_selected]}/> : null
+                    }
                     <DialogFooter>
                         <DialogClose render={<Button variant="outline" onClick={() => setImageIdxSelected(null)}>Cancel</Button>} />
                         <Button type="submit">Save changes</Button>
